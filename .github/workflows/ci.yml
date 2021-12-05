@@ -19,7 +19,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v2
         with:
-          version: ${{ matrix.go-version }}
+          version: latest
 
       - name: Get dependencies
         run: go get -v -t -d ./...
