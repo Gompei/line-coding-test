@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -142,9 +143,14 @@ func toTime(str string) (time.Time, error) {
 	day := 1
 
 	// hh:mm:ss.fff
-	hour, err := strconv.Atoi(str[0:2])
+	hour, err := strconv.Atoi(strings.Split(str, ":")[0])
 	if err != nil {
 		return time.Time{}, err
+	}
+
+	// 想定外の走行時間
+	if hour > 99 {
+		return time.Time{}, errors.New("unexpected running time")
 	}
 
 	for i := hour; 24 <= i; i -= 24 {
