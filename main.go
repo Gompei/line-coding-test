@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strconv"
@@ -18,77 +19,66 @@ const (
 	AdditionalFare = 80
 )
 
-func main() {
-	// 走行ログ取得(最大5万行なので、あらかじめメモリを確保しておく)
-	// Scan後に計算しても良いが、今回は別関数に切り出し
-	driveLogs := make([]string, 0, 500000)
-	reader := bufio.NewScanner(os.Stdin)
-	for reader.Scan() {
-		driveLogs = append(driveLogs, reader.Text())
-	}
-	if err := reader.Err(); err != nil {
-		log.Fatalf("Failed to Scan: %v", err)
-	}
+type DriveLog struct {
+	Time     time.Time
+	Distance float64
+}
 
-	// 運賃計算
-	fare, err := calcTaxiFare(driveLogs)
-	if err != nil {
+func main() {
+	if err := run(); err != nil {
 		log.Fatalf("Failed to calculate taxi fare: %v", err)
 	}
+}
 
+func run() error {
+	driveLogs, err := scanDriveLogs(os.Stdin)
+	if err != nil {
+		return err
+	}
+
+	fare, err := calcTaxiFare(driveLogs)
+	if err != nil {
+		return err
+	}
 	fmt.Println(fare)
+
+	return nil
+}
+
+func scanDriveLogs(input io.Reader) ([]DriveLog, error) {
+	driveLogs := make([]DriveLog, 0, 500000)
+	reader := bufio.NewScanner(input)
+	for reader.Scan() {
+		driveLog, err := parseDriveLog(reader.Text())
+		if err != nil {
+			return nil, err
+		}
+
+		driveLogs = append(driveLogs, driveLog)
+	}
+
+	return driveLogs, reader.Err()
 }
 
 // calcTaxiFare タクシー走行ログを元に、乗車料金を算出する
-func calcTaxiFare(driveLogs []string) (int, error) {
+func calcTaxiFare(driveLogs []DriveLog) (int, error) {
 	// 走行距離, 低速走行総時間
-	var totalMileage, lowSpeedDrivingTotalTime float64
-	// 前レコードの走行時刻,距離
-	var previousDriveTime time.Time
-	var previousDriveMileage float64
+	var totalDistance, lowSpeedDrivingTotalTime float64
 
 	// 走行距離,低速走行時間算出
-	for _, v := range driveLogs {
-		driveLog := strings.Split(v, " ")
+	for i, driveLog := range driveLogs {
+		totalDistance += driveLog.calcDistance()
 
-		// 走行時刻
-		driveTime, err := toTime(driveLog[0])
-		if err != nil {
-			return 0, err
+		if i > 0 {
+			// 平均移動速度
+			averageSpeed := calcAverageSpeed(driveLogs[i-1].Distance, driveLogs[i-1].Distance+driveLog.Distance, driveLogs[i-1].Time, driveLog.Time)
+			// 低速時間算出
+			lowSpeedDrivingTotalTime += driveLog.calcLowSpeedDrivingTime(averageSpeed, driveLogs[i-1].Time)
 		}
-
-		// 移動距離
-		mileage, err := strconv.ParseFloat(driveLog[1], 64)
-		if err != nil {
-			return 0, err
-		}
-
-		// 深夜料金計算
-		if isMidnight(driveTime.Hour()) {
-			totalMileage += mileage * 1.25
-		} else {
-			totalMileage += mileage
-		}
-
-		if mileage != 0.0 {
-			averageSpeed := calcAverageSpeed(previousDriveMileage, mileage+previousDriveMileage, previousDriveTime, driveTime)
-			// 低速走行基準: 10km/h以下
-			if averageSpeed <= 10.0 {
-				// 深夜であれば、1.25倍にする
-				s := driveTime.Sub(previousDriveTime).Seconds()
-				if isMidnight(driveTime.Hour()) {
-					s = s * 1.25
-				}
-				lowSpeedDrivingTotalTime += s
-			}
-		}
-
-		previousDriveTime = driveTime
-		previousDriveMileage = mileage
 	}
 
 	// 距離料金計算
-	fare := calcTaxiMileageFare(totalMileage)
+	fare := calcTaxiDistanceFare(totalDistance)
 
 	// 低速運賃計算
 	fare += calcTaxiLowSpeedDriveFare(lowSpeedDrivingTotalTime)
@@ -96,8 +86,8 @@ func calcTaxiFare(driveLogs []string) (int, error) {
 	return fare, nil
 }
 
-// calcTaxiMileageFare タクシーの走行距離を元に運賃を計算する
-func calcTaxiMileageFare(mileage float64) int {
+// calcTaxiDistanceFare タクシーの走行距離を元に運賃を計算する
+func calcTaxiDistanceFare(mileage float64) int {
 	// 初乗り運賃
 	fare := 410
 
@@ -122,9 +112,29 @@ func calcTaxiLowSpeedDriveFare(lowSpeedDrivingTotalTime float64) int {
 	return additionalFare
 }
 
-func calcAverageSpeed(bm, am float64, bt, at time.Time) float64 {
+func (d DriveLog) calcLowSpeedDrivingTime(averageSpeed float64, previousTimeLog time.Time) float64 {
+	// 低速走行基準: 10km/h以下
+	if averageSpeed <= 10.0 {
+		// 深夜であれば、1.25倍にする
+		s := d.Time.Sub(previousTimeLog).Seconds()
+		if isMidnight(d.Time.Hour()) {
+			return s * 1.25
+		}
+		return s
+	}
+	return 0
+}
+
+func (d DriveLog) calcDistance() float64 {
+	if isMidnight(d.Time.Hour()) {
+		return d.Distance * 1.25
+	}
+	return d.Distance
+}
+
+func calcAverageSpeed(bd, ad float64, bt, at time.Time) float64 {
 	// 移動距離(km)
-	driveDistance := (am - bm) * 0.001
+	driveDistance := (ad - bd) * 0.001
 
 	// 所要時間
 	time := at.Sub(bt).Hours()
@@ -166,4 +176,39 @@ func toTime(str string) (time.Time, error) {
 	}
 
 	return t, nil
+}
+
+func parseDriveLog(log string) (DriveLog, error) {
+	driveLog := strings.Split(log, " ")
+
+	time, err := parseLogTime(driveLog[0])
+	if err != nil {
+		return DriveLog{}, err
+	}
+
+	distance, err := parseLogDistance(driveLog[1])
+	if err != nil {
+		return DriveLog{}, err
+	}
+
+	return DriveLog{
+		Time:     time,
+		Distance: distance,
+	}, nil
+}
+
+func parseLogTime(timeLog string) (time.Time, error) {
+	t, err := toTime(timeLog)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t, nil
+}
+
+func parseLogDistance(distanceLog string) (float64, error) {
+	distance, err := strconv.ParseFloat(distanceLog, 64)
+	if err != nil {
+		return 0, err
+	}
+	return distance, nil
 }

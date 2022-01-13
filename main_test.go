@@ -48,18 +48,21 @@ func TestCalcTaxiFare(t *testing.T) {
 			},
 			expected: 490,
 		},
-		"Wrong driving log format.": {
-			driveLogs: []string{
-				"hh:mm:ss.fff m",
-				"hh:mm:ss.fff m",
-			},
-			wantErr: true,
-		},
 	}
 
 	for name, tt := range testCases {
+		driveLogs := make([]DriveLog, 0, len(tt.driveLogs))
+		for _, log := range tt.driveLogs {
+			driveLog, err := parseDriveLog(log)
+			if err != nil {
+				t.Fatal("parse failure", err)
+			}
+
+			driveLogs = append(driveLogs, driveLog)
+		}
+
 		t.Run(name, func(t *testing.T) {
-			fare, err := calcTaxiFare(tt.driveLogs)
+			fare, err := calcTaxiFare(driveLogs)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("calculateTaxiFare should be fail", err)
@@ -111,7 +114,7 @@ func TestCalcTaxiMileageFare(t *testing.T) {
 
 	for name, tt := range testCases {
 		t.Run(name, func(t *testing.T) {
-			fare := calcTaxiMileageFare(tt.mileage)
+			fare := calcTaxiDistanceFare(tt.mileage)
 			if tt.expected != fare {
 				t.Fatalf("expected to be %v, actual %v", tt.expected, fare)
 			}
